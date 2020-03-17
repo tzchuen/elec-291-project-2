@@ -34,4 +34,9 @@
   - [ ] Reference
   - [ ] Operation of metal detector
   - [ ] Extra features
+  
+## Bonus ideas
+- [ ] PuTTY/LCD display message
+- [ ] Change tone
+- [ ] Tone signal
  
