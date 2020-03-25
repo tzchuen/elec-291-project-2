@@ -1,1 +1,7 @@
 **.code-workspace
+*.bat
+*.o
+*.map
+*.c.map
+*.c.srec
+*.c.elf
