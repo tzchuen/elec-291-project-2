@@ -1,7 +1,4 @@
 #define F_CPU 16000000UL
-#define BAUD 19200
-#define MYUBRR F_CPU/16/BAUD-1
-
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <stdio.h>
@@ -9,10 +6,6 @@
 #include <util/delay.h>
 #include <avr/sfr_defs.h>
 #include "usart.h"
-
-#define F_CPU 16000000UL
-#define BAUD 19200
-#define MYUBRR F_CPU/16/BAUD-1
 
 #define NULL_CHAR '\0'
 
@@ -42,6 +35,7 @@ void waitms(int ms)
 		wait_1ms();
 }
 
+
 // Input Capture Unit Interrupt at ICP1 (Pin 14)
 ISR (TIMER1_CAPT_vect) 
 {
@@ -52,6 +46,7 @@ ISR (TIMER1_CAPT_vect)
 	period = ICR1 - period;			// Period = time between 2 timestamps
 	TIFR1 = 1<<ICF1;				// Clear flag
 }
+
 
 /* DDxn bit in the DDRx Register selects the direction of this pin. If DDxn is written logic one,
  * Pxn is configured as an output pin. If DDxn is written logic zero, Pxn is configured as an input
@@ -121,9 +116,11 @@ int main(void)
 	double frequency;
 	double threshold;
 	
-	waitms(500);	// Give PuTTY a chance to start
+	//waitms(500);	// Give PuTTY a chance to start
+	_delay_ms(500);// Give PuTTY a chance to start
+
 	usart_init();
-	
+
 	printf(ANSI_CLEAR_SCREEN);
 	printf("Metal Detector System v1.0\n"
 	"ELEC 291 - Project 2\n"
