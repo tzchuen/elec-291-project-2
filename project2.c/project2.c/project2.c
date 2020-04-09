@@ -14,30 +14,16 @@
 #define BAUD 19200
 #define MYUBRR F_CPU/16/BAUD-1
 
-//// Signal strength LEDs
-//#define YELLOW_LED_1	PORTD4
-//#define YELLOW_LED_2	PORTD3
-//#define RED_LED_METER   PORTD2
-//
-//// Push buttons
-//#define BUTTON_LEFT_MUTE			PINC3
-//#define BUTTON_MID_LED				PINC4
-//#define BUTTON_RIGHT_LED_STRENGTH	PINC5
-//
-//// LED/Speaker 
-//#define DETECTOR_LED	PORTB2
-//#define SPEAKER			PORTB1
-//
-//
-//// Detector input
-//#define METAL_DETECT_IN	PIND4
+#define NULL_CHAR '\0'
 
+#define NUM_LEDS 3
+
+#define SPEAKER_LOW	500
+#define SPEAKER_MED	200
+#define SPEAKER_FAST 100
 // PuTTY
 #define ANSI_CLEAR_SCREEN "\x1b[2J"
-#define ANSI_CURSOR_END_LINE "\x1b[0K"
-
-//#define LOGIC_HIGH	1
-//#define LOGIC_LOW	0
+#define ANSI_CURSOR_CLEAR_LINE "\x1b[0K"
 
 volatile uint16_t period;
 
@@ -54,19 +40,6 @@ void waitms(int ms)
 {
 	while(ms--) 
 		wait_1ms();
-}
-
-unsigned int ReadChannel(unsigned char mux)
-{
-	ADCSRA = (1<<ADEN) | (1<<ADPS1) | (1<<ADPS0); // frequency prescaler
-	ADMUX = mux; // channel select
-	ADMUX |= (1<<REFS1) | (1<<REFS0);
-	ADCSRA |= (1<<ADSC); // Start conversion
-	while ( ADCSRA & (1<<ADSC) ) ;
-	ADCSRA |= (1<<ADSC); // a transformation ?single conversion?
-	while ( ADCSRA & (1<<ADSC) );
-	ADCSRA &= ~(1<<ADEN); // Disable ADC
-	return ADCW;
 }
 
 // Input Capture Unit Interrupt at ICP1 (Pin 14)
@@ -142,13 +115,14 @@ ISR (TIMER1_CAPT_vect)
 
 int main(void)
 {	
-	// char noise_cancel_choice;
-	
+	char key_check [2];
+	double lower_period;
+	double higher_period;
 	double frequency;
+	double threshold;
 	
 	waitms(500);	// Give PuTTY a chance to start
-	
-	usart_init();	
+	usart_init();
 	
 	printf(ANSI_CLEAR_SCREEN);
 	printf("Metal Detector System v1.0\n"
@@ -157,49 +131,137 @@ int main(void)
 	"Term: 2019W2\n"
 	"Compiled: %s, %s\n\n",
 	__DATE__, __TIME__);
-	
-	//printf("This system uses a TIMER1 Input Capture Unit for frequency measurements.\n"
-		   //"Please indicate if you would like to activate the Input Capture Noise Canceler.\n"
-		   //"NOTE: Activating this function will result in the Input Capture to be delayed by four oscillator cycles\n"
-		   //"1 - Yes\n"
-		   //"2 - No\n\n");
-	
-	// noise_cancel_choice = usart_getchar();
-	
+
+	/* Outputs:
+	 * Red	   C4
+	 * Yellow1 C3
+	 * Yellow2 C2
+	 * Speaker D7
+	 * 
+	 * Inputs:
+	 * Mute		D2 (INT0)
+	 * Lights	D3 (INT1)
+	 */
+	// Pin/Port configuration
+	DDRC |= 0x7c;	// Pin C2-4 are outputs
+	DDRD |= 0xf0;	// Pin D2-3 are inputs
+	PORTD |= 0x0c;	// pull-up resistors
+
+	// External interrupts initializations
+	EICRA |= 0x00;	// interrups triggered at low logic level
+	EIMSK |= 0x02;	// activate external interrupts
+	EIFR  &= 0x00;	// clear interrupt flag
+
 	// ICU Timer Initializations
 	TCCR1A &= 0x00;	// not using compare output modes
-	TCCR1B |= 0x41; // no noise canceler; capture at rising edge; no prescaling
+	TCCR1B |= 0xc1; // no noise canceler; capture at rising edge; no prescaling
 	TIFR1 &= ~(0x20); // clear input capture flag
 	
-	// Pin/Port configuration
-	DDRB  |= 0x07; // Set B0, 1, 2 (outputs, Pin 14-16)
-	DDRC  |= 0x00; // All C pins are inputs
-	PORTC |= 0x38; // Set pull-ups for push buttons
-	DDRD  |= 0x1c; // Set D2, D3, D4 (outputs, Pin 4-6)
+	printf("******SENSOR CALIBRATION******\n"
+		   "Please ensure sensor is clear of all foreign metal.\n"
+		   "Press '1' to continue...\n");
+		   
+	key_check[0] = usart_getchar();
+	while(key_check[0] != '1');	// do nothing
 	
-	/* Outputs:
-	 * YellowL D4
-	 * YellowM D3
-	 * Red	   D2
-	 * Green   B2
-	 * Speaker B1
-	 */
-
-	// Output LED/speaker sanity check
-	PORTD |= 0x1c;	// turn on small LEDs
-	PORTB |= 0x06;	// turn on speaker and green LED
-	waitms(200);
-	PORTD &= ~(0x1c);	// turn off small LEDs
-	PORTB &= ~(0x06);	// turn off speaker and green LED
+	lower_period = period; 
+	key_check[0] = 'x';
+	PORTC |= 0x04;
 	
+	printf("\n\rPlease place some metal directly on the top of the sensor\n"
+		   "Press '1' to continue...\n"
+		   "******SENSOR CALIBRATION COMPLETE******\n");
+	
+	key_check[0] = usart_getchar();
+	while(key_check[0] != '1'); // do nothing
+	
+	higher_period = period;
+	PORTC |= 0x0c;
+	
+	// turn off noise canceling
+	TCCR1B &= 0x41; // no noise canceler; capture at rising edge; no prescaling
+		
 	printf("Initialization complete!\n");
-	printf(ANSI_CURSOR_END_LINE);
-	sei();	// enable interrupts
-    
+	
+	PORTC &= ~(0x0c);
+	
+	PORTC |= 0x04;	// Turn on Yellow1
+	waitms(200);
+	PORTC &= ~(0x04); // Turn off Yellow1
+	
+	PORTC |= 0x08;	// Turn on Yellow2
+	waitms(200);
+	PORTC &= (~0x08);	// Turn off Yellow2
+	
+	PORTC |= 0x10;	// Turn on Red
+	waitms(200);
+	PORTC &= ~(0x10); // Turn off Red
+	
+	PORTD |= 0x8;	// Turn on speaker
+	waitms(200);
+	PORTD &= ~(0x80); // Turn off speaker
+	
+	printf(ANSI_CURSOR_CLEAR_LINE);
+	
 	while (1) 
     {
-		frequency = (double) F_CPU / period;
-		printf("\r F= %fHz", frequency);
+		threshold = (higher_period - lower_period)/NUM_LEDS;
+
+		if (period <= lower_period) {
+			PORTC &= ~(0x1c);	// turn off all lights
+			PORTD &= ~(0x80);	// turn off speaker
+
+			printf(ANSI_CURSOR_CLEAR_LINE);
+			printf("\rNo metal detected...");
+		}
+		
+		else if (period >= lower_period && period < (lower_period + threshold))
+		{
+			PORTC |= 0x04;	// turn on yellow1
+
+			PORTD |= 0x80;
+			waitms(SPEAKER_LOW);
+			PORTD &= ~(0x80);
+
+			printf(ANSI_CURSOR_CLEAR_LINE);
+			printf("\rSome metal detected...");
+		}
+
+		else if (period >= (lower_period + threshold) && period < (lower_period + (2*threshold)) )
+		{
+			PORTC |= 0x0c;	// turn on yellow1 and yellow 2
+
+			PORTD |= 0x80;
+			waitms(SPEAKER_MED);
+			PORTD &= ~(0x80);
+
+			printf(ANSI_CURSOR_CLEAR_LINE);
+			printf("\rGetting closer to metal...");
+		}
+
+		else if (period >= (lower_period + (2*threshold)) && period < higher_period)
+		{
+			PORTC |= 0x1c;	// turn on yellow1 and yellow 2 and red				
+
+			PORTD |= 0x80;
+			waitms(SPEAKER_FAST);
+			PORTD &= ~(0x80);
+
+			printf(ANSI_CURSOR_CLEAR_LINE);
+			printf("\rAlmost at metal...");
+		}
+
+		else
+		{
+			PORTD |= 0x80;
+
+			PORTC |= 0x1c;
+			waitms(250);
+			PORTC &= ~(0x1c);
+
+			printf(ANSI_CURSOR_CLEAR_LINE);
+			printf("\rMetal found!");
+		}
     }
 }	
 

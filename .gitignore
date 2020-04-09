@@ -5,3 +5,9 @@
 *.c.map
 *.c.srec
 *.c.elf
+*.elf
+*.hex
+*.map
+*.obj
+*.lss
+*.srec
