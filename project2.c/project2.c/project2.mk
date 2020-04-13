@@ -5,7 +5,7 @@ CPU=-mmcu=atmega328p
 COPT=-g -Os -Wall $(CPU)
 OBJS=project2.o usart.o
 
-ADCtest.elf: $(OBJS)
+project2.elf: $(OBJS)
 	avr-gcc $(CPU) $(OBJS) -o project2.elf
 	avr-objcopy -j .text -j .data -O ihex project2.elf project2.hex
 	@echo done!

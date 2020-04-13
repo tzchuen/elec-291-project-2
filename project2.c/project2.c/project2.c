@@ -18,7 +18,16 @@
 #define ANSI_CLEAR_SCREEN "\x1b[2J"
 #define ANSI_CURSOR_CLEAR_LINE "\x1b[0K"
 
-volatile uint16_t period;
+// Overflow counters
+volatile uint16_t T1ovf_1 = 0; 
+volatile uint16_t T1ovf_2 = 0;
+// Timestamps 
+volatile uint16_t previous_capture = 0; 
+volatile uint16_t current_capture = 0;
+//capture Flag
+volatile uint8_t update_flag = 0;
+
+// volatile double period;
 
 void wait_1ms(void)
 {
@@ -35,16 +44,38 @@ void waitms(int ms)
 		wait_1ms();
 }
 
-
-// Input Capture Unit Interrupt at ICP1 (Pin 14)
-ISR (TIMER1_CAPT_vect) 
+//Initialize timer
+void InitTimer1(void)
 {
-	while ((TIFR1&1<<ICF1) == 0);	// Wait for capture
-	period = ICR1;					// Get timestamp
-	TIFR1 = 1<<ICF1;				// Clear flag
-	while ((TIFR1&1<<ICF1) == 0);	// Wait for second capture
-	period = ICR1 - period;			// Period = time between 2 timestamps
-	TIFR1 = 1<<ICF1;				// Clear flag
+	//Set Initial Timer value
+	TCNT1=0;
+	//Capture on rising edge, noise cancelling
+	TCCR1B|=(1<<ICES1)|(1<<ICNC1);
+	//Enable input capture and overflow interrupts
+	TIMSK1|=(1<<ICIE1)|(1<<TOIE1);
+}
+void StartTimer1(void)
+{
+	//Start timer without prescaller
+	TCCR1B|=(1<<CS10);
+	//Enable global interrutps
+	sei();
+}
+
+// Capture ISR
+ISR(TIMER1_CAPT_vect)
+{
+	previous_capture = current_capture;
+	T1ovf_1 = T1ovf_2;
+	current_capture = ICR1;
+	T1ovf_2 = 0;
+	update_flag = 1;
+}
+
+//Overflow ISR
+ISR(TIMER1_OVF_vect)
+{
+	T1ovf_2++;
 }
 
 
@@ -111,12 +142,13 @@ ISR (TIMER1_CAPT_vect)
 int main(void)
 {	
 	char key_check [2];
-	double lower_period;
-	double higher_period;
-	double frequency;
-	double threshold;
-	
-	//waitms(500);	// Give PuTTY a chance to start
+	volatile uint8_t base_period;
+	volatile uint8_t metal_period;
+	volatile uint8_t period;
+	unsigned long threshold;
+
+	InitTimer1();
+	StartTimer1();
 	_delay_ms(500);// Give PuTTY a chance to start
 
 	usart_init();
@@ -149,70 +181,86 @@ int main(void)
 	EIMSK |= 0x02;	// activate external interrupts
 	EIFR  &= 0x00;	// clear interrupt flag
 
-	// ICU Timer Initializations
-	TCCR1A &= 0x00;	// not using compare output modes
-	TCCR1B |= 0xc1; // no noise canceler; capture at rising edge; no prescaling
-	TIFR1 &= ~(0x20); // clear input capture flag
+	// // ICU Timer Initializations
+	// TCCR1A &= 0x00;	// not using compare output modes
+	// TCCR1B |= 0xc1; // no noise canceler; capture at rising edge; no prescaling
+	// TIFR1 &= ~(0x20); // clear input capture flag
 	
 	printf("******SENSOR CALIBRATION******\n"
 		   "Please ensure sensor is clear of all foreign metal.\n"
 		   "Press '1' to continue...\n");
 		   
-	key_check[0] = usart_getchar();
-	while(key_check[0] != '1');	// do nothing
+	do
+	{
+		key_check[0] = usart_getchar();
+	} while (key_check[0] != '1');
 	
-	lower_period = period; 
+
+	base_period = (uint8_t) ( ((uint32_t)T1ovf_1<<16) + current_capture - previous_capture );
+	update_flag = 0;
+
 	key_check[0] = 'x';
 	PORTC |= 0x04;
 	
 	printf("\n\rPlease place some metal directly on the top of the sensor\n"
-		   "Press '1' to continue...\n"
-		   "******SENSOR CALIBRATION COMPLETE******\n");
+		   "Press '1' to continue...\n");
 	
-	key_check[0] = usart_getchar();
-	while(key_check[0] != '1'); // do nothing
+	do
+	{
+		key_check[0] = usart_getchar();
+	} while (key_check[0] != '1');
+
+	printf("******SENSOR CALIBRATION COMPLETE******\n\n");
 	
-	higher_period = period;
+	metal_period = (uint8_t) ( ((uint32_t)T1ovf_1<<16) + current_capture - previous_capture );
+	update_flag = 0;
+	key_check[0] = 'x';
 	PORTC |= 0x0c;
 	
-	// turn off noise canceling
-	TCCR1B &= 0x41; // no noise canceler; capture at rising edge; no prescaling
-		
-	printf("Initialization complete!\n");
 	
 	PORTC &= ~(0x0c);
 	
+	printf("Checking lights...\n");
+	
+	
 	PORTC |= 0x04;	// Turn on Yellow1
-	waitms(200);
+	waitms(500);
 	PORTC &= ~(0x04); // Turn off Yellow1
 	
 	PORTC |= 0x08;	// Turn on Yellow2
-	waitms(200);
+	waitms(500);
 	PORTC &= (~0x08);	// Turn off Yellow2
 	
 	PORTC |= 0x10;	// Turn on Red
-	waitms(200);
+	waitms(500);
 	PORTC &= ~(0x10); // Turn off Red
 	
 	PORTD |= 0x8;	// Turn on speaker
-	waitms(200);
+	waitms(500);
 	PORTD &= ~(0x80); // Turn off speaker
-	
+
+	threshold = (base_period - metal_period)/NUM_LEDS;
+
+	printf("Initialization complete!\n");
 	printf(ANSI_CURSOR_CLEAR_LINE);
 	
 	while (1) 
     {
-		threshold = (higher_period - lower_period)/NUM_LEDS;
+		period = (uint8_t)  ;
+		update_flag = 0;
 
-		if (period <= lower_period) {
+		//printf("\r%lu\n", period);
+
+		if (period > base_period) {
 			PORTC &= ~(0x1c);	// turn off all lights
 			PORTD &= ~(0x80);	// turn off speaker
 
 			printf(ANSI_CURSOR_CLEAR_LINE);
 			printf("\rNo metal detected...");
+			printf(ANSI_CURSOR_CLEAR_LINE);
 		}
 		
-		else if (period >= lower_period && period < (lower_period + threshold))
+		else if (period <= base_period && period > (base_period - threshold))
 		{
 			PORTC |= 0x04;	// turn on yellow1
 
@@ -222,9 +270,10 @@ int main(void)
 
 			printf(ANSI_CURSOR_CLEAR_LINE);
 			printf("\rSome metal detected...");
+			printf(ANSI_CURSOR_CLEAR_LINE);
 		}
 
-		else if (period >= (lower_period + threshold) && period < (lower_period + (2*threshold)) )
+		else if (period <= (base_period - threshold) && period > (base_period - (2*threshold)))
 		{
 			PORTC |= 0x0c;	// turn on yellow1 and yellow 2
 
@@ -234,9 +283,10 @@ int main(void)
 
 			printf(ANSI_CURSOR_CLEAR_LINE);
 			printf("\rGetting closer to metal...");
+			printf(ANSI_CURSOR_CLEAR_LINE);
 		}
 
-		else if (period >= (lower_period + (2*threshold)) && period < higher_period)
+		else if (period <= (base_period - (2*threshold)) && period > metal_period)
 		{
 			PORTC |= 0x1c;	// turn on yellow1 and yellow 2 and red				
 
@@ -245,7 +295,8 @@ int main(void)
 			PORTD &= ~(0x80);
 
 			printf(ANSI_CURSOR_CLEAR_LINE);
-			printf("\rAlmost at metal...");
+			printf("\rMetal detected!");
+			printf(ANSI_CURSOR_CLEAR_LINE);
 		}
 
 		else
@@ -253,11 +304,12 @@ int main(void)
 			PORTD |= 0x80;
 
 			PORTC |= 0x1c;
-			waitms(250);
+			waitms(200);
 			PORTC &= ~(0x1c);
 
 			printf(ANSI_CURSOR_CLEAR_LINE);
 			printf("\rMetal found!");
+			printf(ANSI_CURSOR_CLEAR_LINE);
 		}
     }
 }	
